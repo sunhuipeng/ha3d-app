@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面图标前景：白色房子（自适应图标 108dp 画布，主体控制在中央 66dp 安全区内） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 屋身 + 人字顶（外轮廓） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 L80,52 L74,52 L74,78 L34,78 L34,52 L28,52 Z" />
+    <!-- 门（镂空用背景色补） -->
+    <path
+        android:fillColor="#2F6FED"
+        android:pathData="M50,62 L58,62 L58,78 L50,78 Z" />
+</vector>

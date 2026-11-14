@@ -1,0 +1,22 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Kotlin 2.x 会话/缓存目录
+.kotlin/
+
+# JVM 堆转储（gradle OOM 时生成在项目根）
+*.hprof
+
+# 签名文件：绝不入库（将来配 release 签名时防止误提交）
+*.jks
+*.keystore
+
+# macOS 全层级的 .DS_Store
+**/.DS_Store

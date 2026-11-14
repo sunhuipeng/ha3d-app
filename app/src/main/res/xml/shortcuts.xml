@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 长按桌面图标的静态快捷方式（API 25+，minSdk 26 恒可用） -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="settings"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_settings"
+        android:shortcutLongLabel="@string/shortcut_settings_long">
+        <intent
+            android:action="com.sunhuip.ha3dapp.action.SETTINGS"
+            android:targetPackage="com.sunhuip.ha3dapp"
+            android:targetClass="com.sunhuip.ha3dapp.SettingsActivity" />
+    </shortcut>
+</shortcuts>

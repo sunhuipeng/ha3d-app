@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#EEF1F4</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 注意：不要在主题里放 API 27+ 的属性（如 windowLayoutInDisplayCutoutMode），
+             卓易通等老容器解析会闪退；需要时在代码里按 SDK_INT 设置 -->
+    </style>
+
+    <color name="ic_launcher_background">#2F6FED</color>
+</resources>

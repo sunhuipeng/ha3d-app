@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HA 3D Home</string>
+    <string name="shortcut_settings">服务器设置</string>
+    <string name="shortcut_settings_long">连接地址设置</string>
+</resources>
