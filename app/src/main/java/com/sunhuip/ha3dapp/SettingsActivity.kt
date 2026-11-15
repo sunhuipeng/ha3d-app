@@ -1,7 +1,7 @@
 /*
  * SettingsActivity.kt — 服务器设置页（应用内设置）。
  * 入口：① 长按桌面图标「服务器设置」快捷方式；② 错误页「服务器设置」按钮。
- * 改完保存即持久化，返回壳页面后自动重新探测/切换。
+ * 改完保存即持久化，返回壳页面后自动按新地址重新加载。
  */
 package com.sunhuip.ha3dapp
 
@@ -36,7 +36,7 @@ class SettingsActivity : Activity() {
 
         etLocal = EditText(this).apply {
             setText(Prefs.local(this@SettingsActivity))
-            hint = "http://192.168.31.16:8099/index.html?type=mobile"
+            hint = "http://192.168.31.16:8099/index.html"
             inputType = InputType.TYPE_TEXT_VARIATION_URI
             setSingleLine(true); textSize = 14f
         }
@@ -53,7 +53,7 @@ class SettingsActivity : Activity() {
             adapter = android.widget.ArrayAdapter(
                 this@SettingsActivity,
                 android.R.layout.simple_spinner_dropdown_item,
-                presets.map { it.removePrefix("http://").removeSuffix("/index.html?type=mobile") } + "自定义…",
+                presets.map { it.removePrefix("http://").removeSuffix("/index.html") } + "自定义…",
             )
             onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, pos: Int, id: Long) {
