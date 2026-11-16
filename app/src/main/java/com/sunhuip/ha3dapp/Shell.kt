@@ -426,7 +426,6 @@ object Shell {
         } catch (_: Throwable) { null }
         val ver = if (pkg == null) "未知" else "${pkg.packageName} ${pkg.versionName}"
         val scale = try { v?.settings?.textZoom?.toString() ?: "-" } catch (_: Throwable) { "-" }
-        val cacheMb = WebCache.sizeBytes(app) / 1024f / 1024f
 
         /* renderer 优先级读运行期真实值：设失败（老容器）时这里会退回 WAIVED，
            一眼就能看出「切回来白屏」是不是这个原因 */
@@ -450,7 +449,15 @@ object Shell {
             appendLine("渲染优先级：$prio")
             appendLine("缓存代：${Prefs.appVersion(app) ?: "boot"}")
             val base = currentBase ?: Prefs.local(app)
-            appendLine("离线副本：${if (WebCache.hasHtml(app, base)) "有" else "无"}，资源缓存 ${String.format(java.util.Locale.US, "%.1f", cacheMb)} MB")
+            /* 资源副本分开展示：HTML 有但资源 0 个 = 只存了页面没存代码，
+               这种状态离线回退会故意拒绝（没有 js 的回退是白屏），一眼能看出来 */
+            val (n, bytes) = WebCache.assetStats(app, base)
+            val size = when {
+                bytes >= 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1024f / 1024f)
+                bytes > 0 -> String.format(java.util.Locale.US, "%.0f KB", bytes / 1024f)
+                else -> "0"
+            }
+            appendLine("离线副本：${if (WebCache.hasHtml(app, base)) "有" else "无"}，资源 $n 个 / $size")
         }.trim()
     }
 

@@ -332,12 +332,29 @@ object WebCache {
         }
     }
 
+    /** 全部缓存占用。注意目录是三层：webcache/<版本>/<origin>/文件 ——
+     *  之前用两层 sumOf 把 origin 目录当成了文件（length=0），诊断页永远显示 0.0 MB。 */
     fun sizeBytes(ctx: Context): Long = try {
-        root(ctx).listFiles()?.sumOf { d ->
-            if (d.isDirectory) d.listFiles()?.sumOf { if (it.isFile) it.length() else 0L } ?: 0L
-            else d.length()
-        } ?: 0L
-    } catch (_: Throwable) { 0L }
+        root(ctx).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    } catch (_: Throwable) {
+        0L
+    }
+
+    /**
+     * base 这台服务器的资源副本统计：（文件个数, 总字节）。
+     * 只数资源（js/css/woff），不含入口 HTML 副本 —— 两者在诊断页分开显示才有意义：
+     * 「HTML 有、资源 0」说明页面存下来了但 js 没存上（离线回退会故意拒绝这种状态）。
+     */
+    fun assetStats(ctx: Context, base: String): Pair<Int, Long> {
+        return try {
+            val key = originKeyOf(base) ?: return Pair(0, 0L)
+            val files = dirOf(ctx, key).listFiles()
+                ?.filter { it.isFile && it.name != "__index.html" } ?: emptyList()
+            Pair(files.size, files.sumOf { it.length() })
+        } catch (_: Throwable) {
+            Pair(0, 0L)
+        }
+    }
 
     /** 清空所有代的缓存（设置页「清除离线缓存」用；正常路径不需要调） */
     fun clear(ctx: Context) {
