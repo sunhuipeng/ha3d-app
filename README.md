@@ -1,7 +1,21 @@
 # ha3d-app — HA 3D Home 空壳 App
 
-Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览器 PWA 可靠），
-**内网 / 外网入口自动切换**（启动与网络变化时探测，内网通走内网，不通走外网），屏幕常亮。
+Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览器 PWA 可靠），屏幕常亮。
+**固定直连配置的内网地址，不做启动探测、不做外网回退**：主框架加载失败直接显示错误页，
+可点「重试」或进服务器设置改地址。
+
+> 2026-11-15：外网（JMGLink）在手机端即使地址正确也访问不通，**外网入口整体移除**，只保留内网直连。
+
+## 地址清单（2026-11-15）
+
+| 用途 | 地址 |
+|---|---|
+| 内网正式（出厂默认） | `http://192.168.31.16:8099/index.html` |
+| 内网测试 A | `http://192.168.31.78:8099/index.html` |
+| 内网测试 B / Vite dev | `http://192.168.31.229:5190/index.html` |
+
+设置页（长按桌面图标「服务器设置」）可下拉切换这三个内网预设，也可手填任意地址；
+清空输入框后保存 = 恢复默认的内网正式地址。
 
 ## 需要改的地方（只有一个文件）
 
@@ -9,10 +23,15 @@ Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览�
 
 | 常量 | 说明 |
 |---|---|
-| `LOCAL_URL` | 内网入口，当前 `http://192.168.31.16:8077/` |
-| `REMOTE_URL` | 外网入口，**当前留空**，拿到外网地址（frp / DDNS / 反代）后填入即可启用回退 |
-| `LOCAL_PROBE_URL` | 内网可达性探测端点，默认探测入口本身 |
-| `KEEP_SCREEN_ON` | 屏幕常亮开关 |
+| `OFFICIAL_LOCAL_URL` | 内网正式地址 |
+| `TEST_LOCAL_URL_A` / `TEST_LOCAL_URL_B` | 两个内网测试地址 |
+| `LOCAL_URL` | 出厂默认入口，指向 `OFFICIAL_LOCAL_URL` |
+| `PRESETS` | 设置页下拉预设，带「正式 / 测试 / 调试」标签 |
+| `KEEP_SCREEN_ON` / `SHOW_STATUS_BAR` | 屏幕常亮 / 状态栏模式 |
+| `RECHECK_DEBOUNCE_MS` | 错误页态下网络恢复自动重试的防抖毫秒 |
+
+> 主框架加载失败的处理写在 `MainActivity.onMainFrameFailed()`：直接显示错误页，不回退外网。
+> 老版本存过的 `remote_url` 键已不再读取，留着不影响运行。
 
 ## 构建方式（二选一）
 
@@ -22,7 +41,8 @@ Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览�
 2. Actions 自动构建（或手动 Run workflow）；
 3. 到该次运行的 Artifacts 下载 `ha3d-app-debug.apk`，手机安装（需允许「未知来源应用」）。
 
-工程**不带 gradle wrapper**（wrapper jar 是二进制无法手写），CI 里由 `gradle/actions/setup-gradle` 装 Gradle 8.7，无需本地任何东西。
+工程**自带 gradlew**（发行地址指向腾讯镜像），但 CI 里不依赖 wrapper jar：
+由 `gradle/actions/setup-gradle` 装 Gradle 8.7 后直接 `gradle assembleDebug`，本地零环境。
 
 ### 方式 B：本地 CLI 构建（已在本机装好，2026-11-14）
 
@@ -74,9 +94,52 @@ ha3d-app/
 └── app/
     ├── build.gradle.kts             # minSdk 26 / target 34 / AGP 8.5.2 / Kotlin 1.9.24
     └── src/main/
-        ├── AndroidManifest.xml      # INTERNET 权限、明文 HTTP 放行、singleTask
+        ├── AndroidManifest.xml      # INTERNET 权限、明文 HTTP 放行、singleTask、android:name=.App
         ├── java/com/sunhuip/ha3dapp/
+        │   ├── App.kt               # Application：初始化壳层 + 启动预取
         │   ├── Config.kt            # ★ 入口与开关
-        │   └── MainActivity.kt      # WebView + 探测切换 + 沉浸全屏
-        └── res/                     # 名称、主题、自适应图标（矢量房子）
+        │   ├── Prefs.kt             # 地址 + 缓存代（服务端版本号）持久化
+        │   ├── Shell.kt             # ★ WebView 单例 + client + 错误页/离线回退 + 运行诊断
+        │   ├── WebCache.kt          # ★ 离线缓存（按服务端版本分代 + 按版本化 URL 命中）
+        │   ├── SettingsActivity.kt  # 应用内服务器设置页（含运行诊断 / 清缓存）
+        │   └── MainActivity.kt      # 窗口装饰 + attach/detach（不销毁 WebView）
+        └── res/
+            ├── drawable/splash_bg.xml / ic_splash_logo.xml   # 冷启动启动图
+            ├── values/themes.xml                             # windowBackground = 启动图
+            ├── values-v31/themes.xml                         # Android 12+ SplashScreen
+            └── mipmap-*/                                     # 自适应图标（矢量房子）
 ```
+
+## 壳层行为（2026-11-16）
+
+**启动链路**
+
+1. 点图标 → 主题的 `windowBackground` 立刻画出启动图（底色 #EEF1F4 + 图标），不闪白；
+2. `App.onCreate` 建一个离屏 WebView **预热** Chromium 库（省 30~80ms），同时预取入口 HTML；
+3. `MainActivity` 把**进程内单例 WebView**挂上窗口（不是新建）；
+4. 页面 `index.html` 里的静态骨架（`#boot-static`）先顶着 → Vue 挂载后交给 `BootOverlay` 的版面骨架 →
+   **等 3D 渲染循环首帧上屏**才淡出。中途不会出现「骨架没了、3D 还没出来」的二次白屏。
+
+**WebView 生命周期**
+
+- `Shell` 持有唯一实例（`applicationContext` 构造），`MainActivity` 只做 attach/detach；
+- 按返回退出、被系统回收 Activity，再进来都是**把同一个页面重新挂上窗口**，不重新加载；
+- `onDestroy` 不 `destroy()`（`Config.REUSE_WEBVIEW = false` 可退回旧行为）；
+- `setRendererPriorityPolicy(BOUND, waivedWhenNotVisible = false)`：WebView 不可见时 renderer 不降级，
+  切出去看个消息再回来不会白屏重载。
+
+**缓存（两层，都不看文件时间）**
+
+| 依据 | 怎么用 |
+|---|---|
+| 服务端根 `package.json` 的 `version`（`GET /api/version`） | 决定缓存「代」：目录 `files/webcache/<version>/`，发版即换目录，旧代迁移后清理 |
+| URL 自带的版本（Vite 文件哈希 / 插件 `?v=<plugin.json version>` / 旧站 `?v=N`） | 决定单个文件是否命中：版本一变 URL 就变，天然不命中 |
+
+只缓存 js / css / woff2 和入口 HTML；GLB、`catalog.json`、插件模型不碰（文件名不带版本，改了看不出来），
+那类文件仍交给 WebView 的 ETag 协商。填充不依赖预取——**任何成功加载过的 URL 都会落盘**。
+
+**断网兜底**：主框架加载失败时，用「上次成功的 HTML + 本地 js/css 副本」重建页面，顶部浮一条
+「离线模式…重新连接」提示；没有完整副本才出原生错误页。网络恢复会自动重载。
+
+**运行诊断**：设置页底部显示硬件加速真实值、WebView 包名+版本、文本缩放、renderer 优先级、缓存代与占用，
+并带一个「清除离线缓存」按钮 —— 排障截一张图就够，不用接 adb。

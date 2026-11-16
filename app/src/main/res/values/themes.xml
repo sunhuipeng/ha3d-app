@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#EEF1F4</item>
+        <!-- 冷启动就是纯色底：不做启动图。用户要求删掉启动页 —— 反正 WebView 一铺
+             全屏内容就盖上来，logo 启动图只多一段「看了也没信息」的等待。 -->
+        <item name="android:windowBackground">@color/boot_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <!-- 注意：不要在主题里放 API 27+ 的属性（如 windowLayoutInDisplayCutoutMode），
-             卓易通等老容器解析会闪退；需要时在代码里按 SDK_INT 设置 -->
+             卓易通等老容器解析会闪退；需要时在代码里按 SDK_INT 设置，或放到 values-v31 -->
     </style>
 
     <color name="ic_launcher_background">#2F6FED</color>
+
+    <!-- 冷启动底色：与 web/index.html 的 html 背景一致，两端不会出现色差 -->
+    <color name="boot_bg">#EEF1F4</color>
 </resources>
