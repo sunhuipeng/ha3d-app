@@ -1,0 +1,13 @@
+{
+  "name": "ha3d-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Android 壳工程的一键打包入口（供 VS Code「npm 脚本」面板使用，跨平台 Windows/mac；不是 Node 工程，勿 npm install）",
+  "scripts": {
+    "apk": "node scripts/gradle.cjs assembleDebug -Pcn",
+    "apk:release": "node scripts/gradle.cjs assembleRelease -Pcn",
+    "clean": "node scripts/gradle.cjs clean",
+    "apk:install": "adb install -r app/build/outputs/apk/debug/app-debug.apk",
+    "logcat": "adb logcat -s HA3DShell HA3DWebCache"
+  }
+}

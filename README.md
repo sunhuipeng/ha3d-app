@@ -11,7 +11,7 @@ Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览�
 | 用途 | 地址 |
 |---|---|
 | 内网正式（出厂默认） | `http://192.168.31.16:8099/index.html` |
-| 内网测试 A | `http://192.168.31.78:8099/index.html` |
+| 内网测试 A | `http://192.168.31.78:5190/index.html` |
 | 内网测试 B / Vite dev | `http://192.168.31.229:5190/index.html` |
 
 设置页（长按桌面图标「服务器设置」）可下拉切换这三个内网预设，也可手填任意地址；
@@ -143,3 +143,60 @@ ha3d-app/
 
 **运行诊断**：设置页底部显示硬件加速真实值、WebView 包名+版本、文本缩放、renderer 优先级、缓存代与占用，
 并带一个「清除离线缓存」按钮 —— 排障截一张图就够，不用接 adb。
+
+## TV / 遥控支持
+
+App 内**宽屏时**网页会自动开启 TV 焦点模式（`web/src/engine/tvFocus.js`，浏览器里则需 URL 带 `tv=1`）；窄屏不启用，走普通触摸。开启后蓝色描边表示当前焦点，方向键在页面四个区域（左上信息 / 右上工具 / 右侧面板 / 左下楼层）内导航，到边界按位置切区，确认键点击。
+
+**遥控按键映射**（`MainActivity.onKeyDown`）
+
+| 遥控键 | 行为 |
+|---|---|
+| 方向键 ↑ ↓ ← → | `Shell.dispatchTvKey()` → `evaluateJavascript` 调页面 `__tvFocus.key(name)` 寻焦 |
+| OK / 确认 / 中心键 | 同上，发 `ok` 对焦点元素执行点击 |
+| 设置键 / 菜单键 | `Shell.openSettings()` 直接开应用内服务器设置页（不经网页） |
+| 返回键 BACK | 走系统默认（WebView 可回退则回退，否则退出） |
+| HOME 键 | 系统默认，壳不拦截 |
+
+键盘长按的系统 repeat 会连续触发，页面侧寻焦是轻量查询、无需节流。网页侧的焦点导航与调试参数（`?tv=1&debug=1`）详见 `ha-3d-home` 的 README。
+
+## 一键打包（Windows / mac 通用）
+
+根目录 `package.json` 是给 VS Code「npm 脚本」面板用的入口（不是 Node 工程，勿 `npm install`）：
+
+| 脚本 | 作用 |
+|---|---|
+| `npm run apk` | 打 debug APK（`assembleDebug`，依赖走国内镜像） |
+| `npm run apk:release` | 打**带签名**的 release（没配签名则退回 unsigned） |
+| `npm run clean` | 清理构建 |
+| `npm run apk:install` | `adb install -r` 装 debug 包 |
+| `npm run logcat` | 看壳子日志（HA3DShell / HA3DWebCache） |
+
+`scripts/gradle.cjs` 做平台分发：Windows 跑 `gradlew.bat`（JDK 默认取仓库旁 `_tools/jdk17`，可用 `HA3D_JAVA_HOME` 覆盖）；mac 跑 `./gradlew`，会自动补 `gradlew` 可执行位、用 `/usr/libexec/java_home` 找 JDK 17、兜底 `~/Library/Android/sdk`。adb 脚本（`apk:install` / `logcat`）需把 `$ANDROID_HOME/platform-tools` 加进 PATH。产物：`app/build/outputs/apk/debug/app-debug.apk` 与 `app/build/outputs/apk/release/app-release.apk`。
+
+> 脚本名曾用 `install`，那是 npm 生命周期钩子名——在本目录习惯性敲 `npm install` 会误触发 `adb install`，已改名 `apk:install`。
+
+### release 签名（本机私有，绝不入库）
+
+`app/build.gradle.kts` 从**已被 gitignore** 的 `local.properties` 读签名凭据，没配的机器打 release 只会得到 unsigned 包（编译不失败）。要在某台机器出可安装的正式包，两步：
+
+1. 生成 keystore（只需一次，放在 `app/` 下——`*.jks` 已被 gitignore）：
+
+   ```bash
+   keytool -genkeypair -v -keystore app/release.jks -storetype JKS \
+     -keyalg RSA -keysize 2048 -validity 10000 -alias ha3d \
+     -dname "CN=HA 3D Home, OU=HA3D, O=Sunhuip, C=CN"
+   ```
+
+2. 在该机 `local.properties` 追加 4 行（密码换成你自己的）：
+
+   ```properties
+   release.storeFile=app/release.jks
+   release.storePassword=你的store密码
+   release.keyAlias=ha3d
+   release.keyPassword=你的key密码
+   ```
+
+`npm run apk:release` 成功后产物名是 `app-release.apk`（带签名）；若看到 `app-release-unsigned.apk` 说明这台机器没配或配错了，装不上。
+
+⚠️ **keystore 和密码绝不入库**，换机器 / 重装系统前务必自行备份 `app/release.jks` + `local.properties` 里的 4 行——丢了就无法给同一个应用发更新（只能换包名或让用户卸载重装）。`build.gradle.kts` 里没有任何明文密码。

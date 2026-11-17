@@ -84,6 +84,20 @@ class SettingsActivity : Activity() {
             setPadding(0, (14 * d).toInt(), 0, 0)
         }
 
+        /* 屏幕常亮：切换即保存，返回页面立即生效（MainActivity.onResume 重新套 flag）。
+           默认关 —— 常驻展示板才需要，普通手机上开着费电。 */
+        val swKeep = android.widget.Switch(this).apply {
+            text = "屏幕常亮（演示板常驻设备建议开）"
+            textSize = 14f
+            isChecked = Prefs.keepAwake(this@SettingsActivity)
+            setPadding(0, (16 * d).toInt(), 0, 0)
+        }
+        swKeep.setOnCheckedChangeListener { _, checked ->
+            Prefs.setKeepAwake(this@SettingsActivity, checked)
+            Toast.makeText(this, if (checked) "已开启常亮，返回页面即生效" else "已关闭常亮，返回页面即生效",
+                Toast.LENGTH_SHORT).show()
+        }
+
         /* 运行诊断：老版本 WebView / 硬件加速没生效是「掉帧、白屏、闪退」的常见根因，
            放在设置页最下面，排障时截一张图就够了，不用接 adb。 */
         val diag = TextView(this).apply {
@@ -111,6 +125,7 @@ class SettingsActivity : Activity() {
             addView(row)
             addView(tvStatus)
             addView(note)
+            addView(swKeep)
             addView(diag)
             addView(btnClearCache)
         }

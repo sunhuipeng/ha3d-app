@@ -345,6 +345,33 @@ object Shell {
         }
     }
 
+    /* ---------------- TV 遥控 / 设置页 ---------------- */
+
+    /** 遥控方向/确认键转发给页面（engine/tvFocus.js 焦点导航）。
+     *  name ∈ up/down/left/right/ok；页面未激活 TV 模式时 __tvFocus 不存在，静默忽略。 */
+    fun dispatchTvKey(name: String) {
+        val w = web ?: return
+        main.post {
+            try {
+                w.evaluateJavascript(
+                    "if(window.__tvFocus) window.__tvFocus.key('$name');", null,
+                )
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** 打开设置页（服务地址等）：遥控设置实体键与页面内设置入口共用这一条路径 */
+    fun openSettings() {
+        main.post {
+            try {
+                val intent = Intent(app, SettingsActivity::class.java)
+                val act = hostRef?.get()
+                if (act != null) act.startActivity(intent)
+                else app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: Exception) { }
+        }
+    }
+
     /* ---------------- 原生桥（错误页 / 离线提示条 / 页面内设置入口用） ---------------- */
 
     /* 必须是可被反射访问到的类型：WebView 通过反射调用 @JavascriptInterface 方法，
@@ -357,14 +384,7 @@ object Shell {
 
         @JavascriptInterface
         fun openSettings() {
-            main.post {
-                try {
-                    val intent = Intent(app, SettingsActivity::class.java)
-                    val act = hostRef?.get()
-                    if (act != null) act.startActivity(intent)
-                    else app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                } catch (_: Exception) { }
-            }
+            Shell.openSettings()   // 与遥控设置键同一路径（注意限定名，否则递归到自己）
         }
     }
 

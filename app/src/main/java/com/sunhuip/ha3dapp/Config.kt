@@ -11,8 +11,8 @@ object Config {
     /** 内网正式地址（Docker 8099）：出厂默认入口 */
     const val OFFICIAL_LOCAL_URL = "http://192.168.31.16:8099/index.html"
 
-    /** 内网测试地址 A（另一台 Docker 8099） */
-    const val TEST_LOCAL_URL_A = "http://192.168.31.78:8099/index.html"
+    /** 内网测试地址 A（Vite dev 5190） */
+    const val TEST_LOCAL_URL_A = "http://192.168.31.78:5190/index.html"
 
     /** 内网测试地址 B（Vite dev 5190） */
     const val TEST_LOCAL_URL_B = "http://192.168.31.229:5190/index.html"
@@ -29,12 +29,13 @@ object Config {
     /** 设置页下拉预设（手动输入可覆盖为任意固定地址） */
     val PRESETS = listOf(
         Preset("正式 · 192.168.31.16:8099", OFFICIAL_LOCAL_URL),
-        Preset("测试 · 192.168.31.78:8099", TEST_LOCAL_URL_A),
+        Preset("测试 · 192.168.31.78:5190", TEST_LOCAL_URL_A),
         Preset("调试 · 192.168.31.229:5190", TEST_LOCAL_URL_B),
     )
 
-    /** 屏幕常亮（展示板/控制面板常驻设备建议开） */
-    const val KEEP_SCREEN_ON = true
+    /** 屏幕常亮的**默认值**（设置页可覆盖，用户拨过开关后以设置页为准）。
+     *  2026-11-17 改为 false：普通手机上常亮费电；常驻展示板在设置页打开即可。 */
+    const val KEEP_SCREEN_ON = false
 
     /**
      * 顶部状态栏模式：

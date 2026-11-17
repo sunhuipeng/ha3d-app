@@ -14,6 +14,7 @@ object Prefs {
     private const val NAME = "shell"
     private const val K_LOCAL = "local_url"
     private const val K_APP_VER = "app_version"
+    private const val K_KEEP_AWAKE = "keep_awake"
 
     /** 内网入口（用户清空/未设置时回退 Config 默认值） */
     fun local(ctx: Context): String =
@@ -40,6 +41,24 @@ object Prefs {
     fun setAppVersion(ctx: Context, ver: String) {
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
             .putString(K_APP_VER, ver.trim())
+            .apply()
+    }
+
+    /**
+     * 屏幕常亮开关。未设置过 = 用 Config 的默认值（默认关）；
+     * 用户在设置页拨过开关后就以这里为准（存 false 也不会再回落到默认值）。
+     */
+    fun keepAwake(ctx: Context): Boolean = try {
+        val sp = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        if (sp.contains(K_KEEP_AWAKE)) sp.getBoolean(K_KEEP_AWAKE, false)
+        else Config.KEEP_SCREEN_ON
+    } catch (_: Throwable) {
+        false
+    }
+
+    fun setKeepAwake(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(K_KEEP_AWAKE, on)
             .apply()
     }
 }

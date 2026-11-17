@@ -2,7 +2,7 @@
  * MainActivity.kt — 壳容器（很薄的一层）。
  *
  * WebView 的创建、加载、失败兜底、缓存全部搬到 Shell / WebCache，这里只负责：
- *   · 窗口装饰（沉浸式全屏、常亮）
+ *   · 窗口装饰（沉浸式全屏；屏幕常亮按设置页开关，默认关）
  *   · 把单例 WebView attach 上来 / 离开时 detach（不销毁，下次进入零加载）
  *   · 返回键（页内可回退先回退，退到底才退出 App）
  *
@@ -25,7 +25,7 @@ class MainActivity : Activity() {
         installCrashGuard()
         try {
             applyImmersive()
-            if (Config.KEEP_SCREEN_ON) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            applyKeepAwake()
 
             web = Shell.attach(this)     // 复用进程内单例（含预热、诊断、缓存策略）
             Shell.loadConfigured()       // 与当前入口一致时不会重载，避免打断正在看的页面
@@ -98,6 +98,29 @@ class MainActivity : Activity() {
         if (hasFocus) applyImmersive()
     }
 
+    /**
+     * TV/盒子遥控器：方向键与确认键转发给页面焦点导航（engine/tvFocus.js），
+     * 设置实体键（部分遥控映射为 MENU）打开服务地址设置页。
+     * BACK 不拦截（走 onBackPressed：页内回退 → 退出）；HOME 键系统不投递给应用，
+     * 按下即回桌面，天然就是「默认实现」。
+     * 键盘长按会连续触发 onKeyDown（系统自带 repeat），页面侧寻焦是轻量查询，无需节流。
+     */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        when (keyCode) {
+            android.view.KeyEvent.KEYCODE_DPAD_UP -> { Shell.dispatchTvKey("up"); return true }
+            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { Shell.dispatchTvKey("down"); return true }
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { Shell.dispatchTvKey("left"); return true }
+            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { Shell.dispatchTvKey("right"); return true }
+            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+            android.view.KeyEvent.KEYCODE_ENTER,
+            -> { Shell.dispatchTvKey("ok"); return true }
+            android.view.KeyEvent.KEYCODE_SETTINGS,
+            android.view.KeyEvent.KEYCODE_MENU,
+            -> { Shell.openSettings(); return true }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         val w = web
@@ -116,6 +139,15 @@ class MainActivity : Activity() {
         super.onResume()
         web?.onResume()
         applyImmersive()
+        applyKeepAwake()    // 设置页拨了常亮开关，回来立即生效（onRestart→onResume 必经）
+    }
+
+    /** 屏幕常亮按设置页的开关来（未拨过用 Config 默认值）：add/clear 成对，切换不会残留 */
+    private fun applyKeepAwake() {
+        try {
+            if (Prefs.keepAwake(this)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } catch (_: Throwable) { }
     }
 
     override fun onPause() {
