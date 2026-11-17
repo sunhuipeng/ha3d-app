@@ -1,7 +1,9 @@
 # ha3d-app — HA 3D Home 空壳 App
 
-Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览器 PWA 可靠），屏幕常亮。
-**固定直连配置的内网地址，不做启动探测、不做外网回退**：主框架加载失败直接显示错误页，
+> 🔗 项目介绍主页（功能演示、截图）：<https://sunhuipeng.github.io/ha3d-site/>
+
+Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览器 PWA 可靠）
+**固定直连配置的内网地址，不做启动外网探测、不做外网回退**：主框架加载失败直接显示错误页，
 可点「重试」或进服务器设置改地址。
 
 > 2026-11-15：外网（JMGLink）在手机端即使地址正确也访问不通，**外网入口整体移除**，只保留内网直连。
@@ -33,18 +35,8 @@ Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览�
 > 主框架加载失败的处理写在 `MainActivity.onMainFrameFailed()`：直接显示错误页，不回退外网。
 > 老版本存过的 `remote_url` 键已不再读取，留着不影响运行。
 
-## 构建方式（二选一）
-
-### 方式 A：GitHub Actions 云端构建（本地零环境，推荐）
-
-1. 推到 GitHub 仓库（main 分支）；
-2. Actions 自动构建（或手动 Run workflow）；
-3. 到该次运行的 Artifacts 下载 `ha3d-app-debug.apk`，手机安装（需允许「未知来源应用」）。
-
-工程**自带 gradlew**（发行地址指向腾讯镜像），但 CI 里不依赖 wrapper jar：
-由 `gradle/actions/setup-gradle` 装 Gradle 8.7 后直接 `gradle assembleDebug`，本地零环境。
-
-### 方式 B：本地 CLI 构建（已在本机装好，2026-11-14）
+## 构建方式
+### 本地 CLI 构建（已在本机装好，2026-11-14）
 
 本机已就绪：JDK 17（`/Library/Java/JavaVirtualMachines/microsoft-17.jdk`）、
 Android SDK（`~/Library/Android/sdk`，含 platforms;android-34 / build-tools;34.0.0 / cmdline-tools / platform-tools，全部来自腾讯镜像）、
