@@ -57,4 +57,7 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    /* 扫码登录：IntentIntegrator 自带相机扫码界面，扫一次性登录码后由 WebView 完成 qr-login。
+       仅 App 端需要，其他端用账号密码。阿里云镜像（settings.gradle.kts -Pcn）可解析。 */
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

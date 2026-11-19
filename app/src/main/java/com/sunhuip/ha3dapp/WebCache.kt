@@ -19,14 +19,19 @@
  *      → 所以按「完整 URL（含 query）」做文件名即可：版本一变 URL 就变，天然不命中。
  *
  * ── 缓存边界（这条踩过坑，改前务必看完）
- *   只缓存「URL 自带版本」的代码类资源：文件名带内容哈希，或 query 里有 v=。
+ *   只缓存「URL 自带版本」的资源：文件名带内容哈希，或 query 里有 v=。
  *   下面这些必须放过，一律返回 null 交给 WebView：
  *     · Vite dev 的裸模块：/src/、/@vite/、/@fs/、/node_modules/ 下的所有文件
  *       dev 下一次加载有几百个模块，逐个再额外抓一遍落盘会把请求量翻倍并排队，
  *       表现就是「手机浏览器等一会能出来、App 里骨架一直不动」。
  *       而且 dev 模块随时变，缓存下来还会加载到旧模块。
- *     · GLB / catalog.json / 插件 models：名字不带版本，改了看不出来，
- *       交给 WebView 自己的 ETag 协商（服务端已实现），安全且不用我们操心。
+ *     · 不带版本号的 GLB / catalog.json：改了看不出来，交给 WebView 自己的
+ *       ETag 协商（服务端已实现），安全且不用我们操心。
+ *   GLB（2026-11-19 起纳入）：home 服务端已全面版本化 —— 插件 GLB 拼
+ *     plugin.json version、家具包 GLB 拼 item.json version、内置 GLB 拼
+ *     package.json version（?v= → immutable）。所以 query 带 v= 的 GLB 也按
+ *     「自带版本」缓存：断网也能加载出 3D 模型，版本一变 URL 就变不会命中旧文件。
+ *     代价是落盘体积（每个模型几 MB），由版本代切换时整体清理来兜底。
  *
  * ── 填充时机
  *   两条路都会写盘，命中只要求「这个 URL 曾经成功加载过」：
@@ -54,8 +59,8 @@ object WebCache {
     /** 版本未知时（首次安装）用的临时代 */
     private const val BOOT = "boot"
 
-    /** 只缓存这些扩展名的资源（URL 自带版本的代码类） */
-    private val CODE_EXT = setOf("js", "css", "woff2", "woff")
+    /** 只缓存这些扩展名的资源（URL 自带版本的代码类 + 带版本的模型） */
+    private val CODE_EXT = setOf("js", "css", "woff2", "woff", "glb")
 
     /** dev 服务器（Vite）的裸模块路径前缀：这些绝不能按文件缓存，见文件头说明 */
     private val DEV_PREFIX = listOf("/src/", "/@", "/node_modules/", "/__vite", "/favicon")
@@ -124,6 +129,7 @@ object WebCache {
         name.endsWith(".css") -> "text/css"
         name.endsWith(".woff2") -> "font/woff2"
         name.endsWith(".woff") -> "font/woff"
+        name.endsWith(".glb") -> "model/gltf-binary"
         else -> "application/octet-stream"
     }
 

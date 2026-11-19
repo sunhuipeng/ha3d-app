@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 读当前 WiFi 名称，用于自动判断「在家/外出」选内网还是外网地址。
+         Android 10+ 读 SSID 还要定位权限 + 定位开关；读不到时按「在家」兜底，不影响联网。 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 扫码登录：调用摄像头扫描一次性登录二维码 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".App"
@@ -33,5 +42,12 @@
             android:exported="false"
             android:label="@string/shortcut_settings_long"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize" />
+
+        <!-- 扫码登录（com.journeyapps:zxing-android-embedded）：竖屏扫码界面，扫完自动关。
+             主题沿用库默认（ZxingTheme），只覆写朝向；xmlns:tools 声明在 manifest 根上。 -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="portrait"
+            tools:replace="android:screenOrientation" />
     </application>
 </manifest>

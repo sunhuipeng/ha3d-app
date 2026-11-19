@@ -4,34 +4,24 @@
  */
 package com.sunhuip.ha3dapp
 
-/** 设置页下拉的一项：label 给人看（区分正式 / 测试），url 是真实入口 */
-data class Preset(val label: String, val url: String)
-
 object Config {
-    /** 内网正式地址（Docker 8099）：出厂默认入口 */
+    /**
+     * 出厂默认内网地址（Docker 8099）。仅为「首次安装、设置页从没存过」时的兜底，
+     * 用户在设置页可维护成任意多个地址——这里不再有写死的预设列表。
+     */
     const val OFFICIAL_LOCAL_URL = "http://192.168.31.16:8099/index.html"
 
-    /** 内网测试地址 A（Vite dev 5190） */
-    const val TEST_LOCAL_URL_A = "http://192.168.31.78:5190/index.html"
+    /** 出厂默认内网地址列表（一行一个；用户设置页保存后以设置页为准） */
+    val DEFAULT_LOCAL_URLS = listOf(OFFICIAL_LOCAL_URL)
 
-    /** 内网测试地址 B（Vite dev 5190） */
-    const val TEST_LOCAL_URL_B = "http://192.168.31.229:5190/index.html"
+    /* ---------------- 网络环境判定（见 NetEnv.kt） ---------------- */
 
-    /**
-     * 默认入口（不做地址探测、不做外网回退）：启动 / 重试 / 从设置页返回时直接加载
-     * 设置页存的地址，没存过就用这里。出厂默认走内网正式地址，改这里需要重新打包。
-     *
-     * 外网（JMGLink）在手机端即使地址正确也访问不通，2026-11-15 起整体移除，
-     * 只保留内网直连；主框架加载失败直接显示错误页，由用户重试或进设置页改地址。
-     */
-    const val LOCAL_URL = OFFICIAL_LOCAL_URL
-
-    /** 设置页下拉预设（手动输入可覆盖为任意固定地址） */
-    val PRESETS = listOf(
-        Preset("正式 · 192.168.31.16:8099", OFFICIAL_LOCAL_URL),
-        Preset("测试 · 192.168.31.78:5190", TEST_LOCAL_URL_A),
-        Preset("调试 · 192.168.31.229:5190", TEST_LOCAL_URL_B),
-    )
+    /** 自动：读 WiFi SSID 与「家里 WiFi」名单比对；读不到按在家处理 */
+    const val NETWORK_MODE_AUTO = "auto"
+    /** 手动：强制按在家处理（用内网地址） */
+    const val NETWORK_MODE_HOME = "home"
+    /** 手动：强制按外出处理（用外网地址） */
+    const val NETWORK_MODE_AWAY = "away"
 
     /** 屏幕常亮的**默认值**（设置页可覆盖，用户拨过开关后以设置页为准）。
      *  2026-11-17 改为 false：普通手机上常亮费电；常驻展示板在设置页打开即可。 */

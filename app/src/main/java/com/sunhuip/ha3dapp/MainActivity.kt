@@ -10,11 +10,14 @@
  */
 package com.sunhuip.ha3dapp
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.view.WindowManager
 import android.webkit.WebView
+import androidx.core.content.ContextCompat
 
 class MainActivity : Activity() {
 
@@ -29,6 +32,7 @@ class MainActivity : Activity() {
 
             web = Shell.attach(this)     // 复用进程内单例（含预热、诊断、缓存策略）
             Shell.loadConfigured()       // 与当前入口一致时不会重载，避免打断正在看的页面
+            ensureLocationPermission()   // 自动模式读 SSID 需要定位权限（用户选「自动为主+手动兜底」）
         } catch (t: Throwable) {
             /* 老容器（卓易通等）缺 WebView / 不支持新 API 时不闪退：直接把错误画在屏幕上 */
             showFatal(t)
@@ -150,8 +154,46 @@ class MainActivity : Activity() {
         } catch (_: Throwable) { }
     }
 
+    /* ---------- 定位权限：自动模式读 WiFi 名称判断在家/外出 ---------- */
+
+    private fun ensureLocationPermission() {
+        if (!NetEnv.needLocationPermission(this)) return
+        /* 首次弹框被拒后，isRequestingPermission 避免反复弹；用户下次进设置页可再触发 */
+        if (requestPermissionsGranted()) return
+        try {
+            requestPermissions(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                REQ_LOCATION,
+            )
+        } catch (_: Throwable) { }
+    }
+
+    private fun requestPermissionsGranted(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_LOCATION) return
+        /* 授权结果出来后重新判环境并加载：可能从「默认在家」切到真正的地址列表。
+           Shell 内部会比对，地址没变则不重载，不会打断页面。 */
+        val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+        if (granted) Shell.refreshEnvironment()
+    }
+
+    /** 扫码登录：库自带扫码界面关闭后，把结果交回 Shell 解析（含来源校验 + WebView 登录） */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        Shell.handleScanResult(requestCode, resultCode, data)
+    }
+
     override fun onPause() {
         web?.onPause()
+        Shell.flushCookies()   // 落盘登录 cookie，重启后仍保持登录
         super.onPause()
     }
 
@@ -176,13 +218,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        /** HTTP 可达性探测（1.5s 超时，2xx~4xx 均视为活着）——设置页「测试连通」用 */
-        fun reachable(url: String): Boolean = try {
-            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 1500
-            conn.readTimeout = 1500
-            conn.instanceFollowRedirects = true
-            conn.responseCode in 200..499
-        } catch (_: Exception) { false }
+        private const val REQ_LOCATION = 1001
     }
 }

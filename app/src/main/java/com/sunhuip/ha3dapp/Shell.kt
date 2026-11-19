@@ -17,13 +17,16 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.webkit.CookieManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
+import android.widget.Toast
 import android.webkit.JavascriptInterface
+import com.google.zxing.integration.android.IntentIntegrator
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -45,12 +48,18 @@ object Shell {
     var web: WebView? = null
         private set
 
-    /** 当前已加载的入口 URL；null = 错误页态 */
+    /**
+     * 当前已加载的入口 URL；null = 错误页态。
+     * 即设置页按当前网络环境解析出的地址：在家=下拉选定的内网地址，外出=外网地址。
+     */
     var currentBase: String? = null
         private set
 
     /** 是否正显示「离线回退副本」：网络恢复后自动重载一次 */
     private var offlineShown = false
+
+    /** 上次按 SSID 判定的环境（null=还没判定过），用于 WiFi 切换时检测内外网变化 */
+    private var lastInHome: Boolean? = null
 
     private var hostRef: WeakReference<Activity>? = null
     private var recheckPending = false
@@ -62,8 +71,69 @@ object Shell {
 
     fun init(ctx: Context) {
         app = ctx.applicationContext
+        /* 登录 session 走 cookie：显式开启（第一方默认开，这里写死避免被系统策略关掉），
+           第三方 cookie 也放行。cookie 按 origin 隔离，换地址会失效——为免重登，
+           原生另存一份 token（Prefs.authToken），每次加载页面前预置到目标 origin，
+           见 seedAuthCookie / Bridge.saveToken。 */
+        try {
+            CookieManager.getInstance().setAcceptCookie(true)
+        } catch (_: Throwable) { }
         warmUp()
         registerNetworkCallback()
+    }
+
+    /** 把内存中的 cookie 落盘：进后台 / 登出后调用，保证重启 App 仍保持登录 */
+    fun flushCookies() {
+        try { CookieManager.getInstance().flush() } catch (_: Throwable) { }
+    }
+
+    /* ---------------- 登录态：原生 token <-> WebView cookie ---------------- */
+
+    /**
+     * 把原生 token 预置为「目标地址 origin」的 session cookie。
+     *
+     * 为什么需要它：首屏 document 导航（loadUrl）带不了自定义 header，服务端 guard
+     * 会把它 302 到登录页。只有页面内的 fetch 才走 apiAuth.js 注入 X-HA3D-Token。
+     * 因此在 loadUrl 之前先按目标 origin 种好 cookie，document 请求就能带 cookie 通过。
+     *
+     * 内外网切换的本质：origin 变了、旧 cookie 带不过去；但原生 token 还在，
+     * 重新种到新 origin 即可，服务端 session 表是同一张，token 依旧有效。
+     *
+     * Secure 标志跟随目标 scheme：https 加、http 不加（加了的 Secure cookie 在 http 下
+     * 不会被发送，会导致内网直连登不进）。
+     */
+    private fun seedAuthCookie(url: String) {
+        val token = Prefs.authToken(app) ?: return
+        try {
+            val u = java.net.URI(url)
+            val scheme = (u.scheme ?: "").lowercase()
+            if (scheme != "http" && scheme != "https") return
+            val secure = if (scheme == "https") "; Secure" else ""
+            /* Path=/ 必须与服务端 Set-Cookie 一致；Max-Age 给足，跟随服务端 session 有效期量级 */
+            val cookie = "ha3d_session=$token; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000$secure"
+            CookieManager.getInstance().setCookie(url, cookie)
+        } catch (_: Throwable) { }
+    }
+
+    /** JS 调：登录成功后把服务端返回的 token 交给原生存放，并即时预置到当前 origin */
+    fun saveTokenFromJs(token: String) {
+        if (token.isBlank()) return
+        Prefs.setAuthToken(app, token)
+        currentBase?.let { seedAuthCookie(it) }
+        flushCookies()
+    }
+
+    /** JS 读：apiAuth.js 的 fetch 守卫注入 X-HA3D-Token 用 */
+    fun tokenForJs(): String = Prefs.authToken(app) ?: ""
+
+    /** 退出登录：清原生 token + 清各 origin cookie（服务端 logout 后前端调） */
+    fun clearAuth() {
+        Prefs.clearAuthToken(app)
+        try {
+            val cm = CookieManager.getInstance()
+            cm.removeAllCookies(null)
+            cm.flush()
+        } catch (_: Throwable) { }
     }
 
     /**
@@ -135,6 +205,9 @@ object Shell {
         v.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER)
         v.isVerticalScrollBarEnabled = false
         v.addJavascriptInterface(Bridge(), "AppShell")
+        try {
+            CookieManager.getInstance().setAcceptThirdPartyCookies(v, true)
+        } catch (_: Throwable) { }
         v.webChromeClient = WebChromeClient()
         v.webViewClient = Client()
         web = v
@@ -185,18 +258,49 @@ object Shell {
     /* ---------------- 入口装载 ---------------- */
 
     /**
-     * 加载设置页存的入口地址。与当前一致时不重载（避免打断正在看的页面）；
-     * force = true 时（点「重试」）无条件重载。
+     * 按网络环境解析入口地址（单一地址，无探测）：
+     *   在家 → 设置页下拉选定的内网地址
+     *   外出 → 外网地址；没配外网地址时退回内网，避免白屏
+     */
+    private fun resolveTarget(): String {
+        if (NetEnv.inHome(app)) return Prefs.local(app)
+        val remote = Prefs.remote(app)
+        return if (remote.isNotBlank()) remote else Prefs.local(app)
+    }
+
+    /**
+     * 加载当前环境对应的入口地址。与当前一致时不重载（避免打断正在看的页面）；
+     * force = true 时（点「重试」）无条件重载。连不上不探测，直接走离线副本/错误页。
      */
     fun loadConfigured(force: Boolean = false) {
         recheckPending = false
         offlineShown = false
-        val target = Prefs.local(app)
-        val v = ensure()
+        lastInHome = NetEnv.inHome(app)   // 更新环境基线，作为下次 WiFi 切换的对比依据
+        val target = resolveTarget()
+        ensure()   // 保证 navigateTo 里 web 非空
         if (force || target != currentBase) {
-            currentBase = target
-            v.loadUrl(target)
+            navigateTo(target)
         }
+    }
+
+    /**
+     * 权限刚授予 / 设置页改了环境配置后调用：按最新环境重算地址。
+     * 地址没变时 loadConfigured 内部会跳过，不打断页面；变了则重载。
+     */
+    fun refreshEnvironment() {
+        lastInHome = null                 // 强制下次网络回调重新比对
+        loadConfigured(force = false)
+    }
+
+    /**
+     * 真正发起一次导航：预置登录 cookie + loadUrl，并同步 currentBase。
+     * 所有地址切换（首屏、WiFi 切换、网络恢复）都走这里，保证 cookie 按新 origin 重种。
+     */
+    private fun navigateTo(url: String) {
+        currentBase = url
+        /* 首屏 document 导航带不了 header，靠预置的 cookie 让服务端 guard 直接放行 */
+        seedAuthCookie(url)
+        web?.loadUrl(url)
     }
 
     /** 网络恢复后的防抖重试：错误页态 / 离线页态才重载，正常显示中不打扰 */
@@ -218,11 +322,35 @@ object Shell {
         }, Config.RECHECK_DEBOUNCE_MS)
     }
 
+    /**
+     * 网络事件（WiFi 连上 / 切到另一网络）统一入口。
+     * 两件事：
+     *   1. 若「在家/外出」判定因 WiFi 切换而变了 → 无条件重载到新环境对应地址（用户要求）。
+     *   2. 否则走原网络恢复逻辑：只在错误页 / 离线页态才重试，正常显示中不打扰。
+     *
+     * 判定放在 postDelayed 里做，是为了避开网络刚连上时 SSID 还没就绪的瞬间；
+     * 同时延迟也充当防抖——WiFi 切换常伴多次 onAvailable，只处理最后一次。
+     */
+    private fun onNetworkChanged() {
+        main.postDelayed({
+            val nowHome = NetEnv.inHome(app)
+            val prev = lastInHome
+            lastInHome = nowHome
+            if (prev != null && prev != nowHome) {
+                /* 环境变了：即使页面正常显示也要主动切到新环境地址 */
+                loadConfigured(force = true)
+                return@postDelayed
+            }
+            scheduleRecheck()
+        }, Config.RECHECK_DEBOUNCE_MS)
+    }
+
     private fun registerNetworkCallback() {
         try {
             val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) { scheduleRecheck() }
+                override fun onAvailable(network: Network) { onNetworkChanged() }
+                /* 同一个 WiFi 内也可能有 onLinkPropertiesChanged，但 SSID 不变无需切环境 */
                 override fun onLost(network: Network) { /* 显示中交给 onReceivedError 兜底 */ }
             })
         } catch (_: Throwable) {
@@ -236,11 +364,16 @@ object Shell {
      * 主框架加载失败统一入口。
      * 只认 failingUrl == currentBase，子资源失败不打扰页面；同一失败的两次回调
      * （新旧两个重载）后到的会被这层比较挡掉，不会重复弹页。
+     * 不做任何探测：直接走离线副本 → 原生错误页。
      */
     private fun onMainFrameFailed(failingUrl: String?, description: String?) {
         val base = currentBase ?: return
         if (failingUrl == null || failingUrl != base) return
+        fallbackToOfflineOrError(base, description)
+    }
 
+    /** 主框架失败的最终兜底：离线副本 → 原生错误页 */
+    private fun fallbackToOfflineOrError(base: String, description: String?) {
         /* 优先回退到「上次成功抓到的 HTML + 本地 js/css 副本」：
            页面能起来，由它自己显示「连不上 HA / 正在重连」，比甩原生错误页有用得多。
            没有完整副本（从没成功加载过）时，老老实实出原生错误页。 */
@@ -345,6 +478,116 @@ object Shell {
         }
     }
 
+    /* ---------------- 扫码登录 ---------------- */
+
+    /**
+     * 打开扫码界面（设置页「扫码授权登录」按钮调到这里）。
+     * 扫的是另一台「待登录」设备展示的一次性二维码，内容形如 http://host/login.html?code=xxx。
+     * 用 IntentIntegrator 起库自带的 CaptureActivity；相机权限由库内部申请。
+     *
+     * ⚠ from 必须传「当前前台」的 Activity：startActivityForResult 的结果只回调给
+     * 发起方。从设置页（MainActivity 之上）发起时若仍用 MainActivity 起，
+     * MainActivity 处于 stopped 态，result 会被系统挂起到它回到前台为止——
+     * 表现为「不退出设置页，授权永远不发生」（2026-11-19 实测踩坑）。
+     */
+    fun startScan(from: Activity? = null) {
+        val act = from ?: hostRef?.get() ?: return
+        main.post {
+            try {
+                IntentIntegrator(act)
+                    .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                    .setPrompt("扫描待登录设备展示的授权二维码")
+                    .setBeepEnabled(true)
+                    .initiateScan()
+            } catch (e: Throwable) {
+                Log.e(TAG, "startScan", e)
+                Toast.makeText(app, "无法打开扫码", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * 扫码结果入口：MainActivity.onActivityResult 原样转发。
+     * 返回 true 表示这是扫码回调（已消费），false 表示与本模块无关。
+     */
+    fun handleScanResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+        val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data) ?: return false
+        val contents = result.contents ?: return true   // 用户取消，静默
+        processScanPayload(contents)
+        return true
+    }
+
+    /**
+     * 扫码授权（2026-11-19 改为授权语义）：App 已登录 = 授权方，扫码批准「待登录方」登录。
+     *
+     * 跨网络关键：payload 里的 origin 是【待登录方】的地址，App 未必连得上（一个内网一个外网
+     * 是常态），一律不信任也不打开——只提取其中的 code。授权请求发往 App 自己已登录的
+     * 服务地址（currentBase 的 origin），带原生 token；两端只要打到同一个后端进程，
+     * code 就命中服务端同一份内存记录，origin 不同无妨。
+     *
+     * qr-approve 不写 cookie：登录态由待登录方自己调 qr-login 落在它那边。
+     * App 授权成功后仅 Toast 提示，不跳首页、不改自身登录态。
+     */
+    private fun processScanPayload(raw: String) {
+        val code: String
+        try {
+            val u = java.net.URI(raw)
+            val scheme = u.scheme ?: ""
+            if (scheme != "http" && scheme != "https") {
+                Toast.makeText(app, "二维码不是登录地址", Toast.LENGTH_SHORT).show(); return
+            }
+            val q = u.query ?: ""
+            code = q.split("&")
+                .firstOrNull { it.startsWith("code=") }
+                ?.substring(5)
+                ?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: ""
+            if (code.isEmpty()) {
+                Toast.makeText(app, "二维码不含登录码", Toast.LENGTH_SHORT).show(); return
+            }
+        } catch (e: Throwable) {
+            Toast.makeText(app, "二维码格式错误", Toast.LENGTH_SHORT).show(); return
+        }
+
+        /* 授权方必须已登录（有原生 token），否则无从授权 */
+        val token = Prefs.authToken(app)
+        if (token.isNullOrBlank()) {
+            Toast.makeText(app, "请先在 App 登录后再扫码授权", Toast.LENGTH_LONG).show(); return
+        }
+        /* 授权请求打 App 自己已登录的服务地址；错误页态（currentBase 为 null）说明服务未连通 */
+        val base = currentBase
+        if (base.isNullOrBlank()) {
+            Toast.makeText(app, "尚未连接服务，无法授权", Toast.LENGTH_LONG).show(); return
+        }
+        val origin = try {
+            val b = java.net.URI(base)
+            (b.scheme ?: "http") + "://" + b.authority
+        } catch (e: Throwable) {
+            Toast.makeText(app, "当前服务地址异常，无法授权", Toast.LENGTH_SHORT).show(); return
+        }
+
+        /* code / token 均做 JS 字符串转义，杜绝注入 */
+        val safeCode = code.replace("\\", "\\\\").replace("'", "\\'")
+        val safeToken = token.replace("\\", "\\\\").replace("'", "\\'")
+        val js = """
+            (function(){
+              var h = {'Content-Type':'application/json', 'X-HA3D-Token':'$safeToken'};
+              fetch('$origin/api/auth/qr-approve', {
+                method:'POST', headers:h, credentials:'same-origin',
+                body: JSON.stringify({code:'$safeCode'})
+              }).then(function(r){ return r.json().catch(function(){return {};}).then(function(j){ return {ok:r.ok, j:j}; }); })
+                .then(function(x){
+                  if (x.ok && x.j.ok) { window.AppShell.scanAuthResult('已授权，对方设备将自动登录'); }
+                  else if (x.j && x.j.needLogin) { window.AppShell.scanAuthResult('登录已失效，请先在 App 重新登录'); }
+                  else { window.AppShell.scanAuthResult((x.j && x.j.error) || '授权失败'); }
+                })
+                .catch(function(){ window.AppShell.scanAuthResult('网络错误，无法连接服务'); });
+            })();
+        """.trimIndent()
+        main.post {
+            web?.evaluateJavascript(js, null)
+        }
+    }
+
     /* ---------------- TV 遥控 / 设置页 ---------------- */
 
     /** 遥控方向/确认键转发给页面（engine/tvFocus.js 焦点导航）。
@@ -385,6 +628,34 @@ object Shell {
         @JavascriptInterface
         fun openSettings() {
             Shell.openSettings()   // 与遥控设置键同一路径（注意限定名，否则递归到自己）
+        }
+
+        /** 设置页「扫码授权登录」流程：授权请求完成后由注入的 JS 回调，原生 Toast 提示结果 */
+        @JavascriptInterface
+        fun scanAuthResult(msg: String) {
+            Toast.makeText(app, msg, if (msg.startsWith("已授权")) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+        }
+
+        /** 登录页「扫码登录」按钮：打开摄像头扫一次性登录码（保留兼容，现入口在设置页） */
+        @JavascriptInterface
+        fun scanLogin() {
+            Shell.startScan()
+        }
+
+        /** 登录成功后由页面调用，把服务端返回的 token 存进原生层（跨地址复用） */
+        @JavascriptInterface
+        fun saveToken(token: String) {
+            Shell.saveTokenFromJs(token)
+        }
+
+        /** apiAuth.js 的 fetch 守卫读取，注入 X-HA3D-Token 请求头 */
+        @JavascriptInterface
+        fun getToken(): String = Shell.tokenForJs()
+
+        /** 退出登录：清原生 token 与各 origin cookie */
+        @JavascriptInterface
+        fun logout() {
+            Shell.clearAuth()
         }
     }
 

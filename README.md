@@ -2,38 +2,65 @@
 
 > 🔗 项目介绍主页（功能演示、截图）：<https://sunhuipeng.github.io/ha3d-site/>
 
-Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览器 PWA 可靠）
-**固定直连配置的内网地址，不做启动外网探测、不做外网回退**：主框架加载失败直接显示错误页，
-可点「重试」或进服务器设置改地址。
+Android WebView 空壳：嵌套 ha-3d-home 页面，沉浸式全屏（比浏览器 PWA 可靠）。
+**地址全部由用户在应用内设置页填写，代码里没有写死的预设列表**。
 
-> 2026-11-15：外网（JMGLink）在手机端即使地址正确也访问不通，**外网入口整体移除**，只保留内网直连。
+## 功能特性
 
-## 地址清单（2026-11-15）
+- **内外网自动切换**：按「在家 / 外出」自动选地址——在家用内网地址列表（连不上依次探测后续地址），外出用外网地址；监听 WiFi 变化，切换环境主动重载（详见下方「网络环境切换」）
+- **扫码授权登录**：设置页「扫码授权登录其他设备」——App 已登录时，扫 PC/电视登录页出示的一次性二维码批准对方免密登录；两端一内网一外网、打同一个服务即可（详见下方「登录（外网穿透时用）」）
+- **内外网切换免重登**：原生 token（`Prefs.authToken`）在每次切换地址后按新 origin 预种登录 cookie，服务端重启也已落盘恢复（详见下方「登录」）
+- **TV 遥控模式**：宽屏 + App 壳自动启用四区域方向导航，遥控器可直接操作页面（详见下方「TV / 遥控支持」）
+- **离线兜底**：WebCache 按 origin 落盘 HTML + 关键静态资源，断网时页面照常打开并提示重连
 
-| 用途 | 地址 |
-|---|---|
-| 内网正式（出厂默认） | `http://192.168.31.16:8099/index.html` |
-| 内网测试 A | `http://192.168.31.78:5190/index.html` |
-| 内网测试 B / Vite dev | `http://192.168.31.229:5190/index.html` |
+## 网络环境切换（2026-11-19）
 
-设置页（长按桌面图标「服务器设置」）可下拉切换这三个内网预设，也可手填任意地址；
-清空输入框后保存 = 恢复默认的内网正式地址。
+按「在家 / 外出」自动选地址，且切 WiFi 会主动重新判定、切换：
 
-## 需要改的地方（只有一个文件）
+| 环境 | 用哪个地址 | 连不上怎么办 |
+|---|---|---|
+| 在家 | 「内网地址列表」第一个（启动直接加载，零延迟） | 依次探测列表里的后续地址，用第一个连得上的临时加载（不写回配置） |
+| 外出 | 「外网地址」（单个，手动输入） | 直接显示错误页 / 离线副本，不探测 |
 
-`app/src/main/java/com/sunhuip/ha3dapp/Config.kt`
+环境判定（`NetEnv.inHome`）：
+1. 设置页选了「强制在家 / 强制外出」→ 按手动，不看 WiFi；
+2. 自动模式 → 读当前 WiFi 名称，命中「家里 WiFi 名单」= 在家，读到但不在名单 = 外出；
+3. **读不到 SSID（无定位权限 / 定位开关关 / 非 WiFi）或没配家里名单 → 默认在家**。
+
+- 读 SSID 在 Android 10+ 要定位权限 + 定位开关；App 会自动申请权限，设置页「读取当前 WiFi」可一键填入名单。
+- `ConnectivityManager.NetworkCallback` 监听网络变化：WiFi 切换导致环境变化时 `Shell.loadConfigured(force=true)` 主动重载。
+- 家里配置的地址列表存在 `Prefs.localList()`（换行分隔，老的单地址数据自动兼容为一项）；外网地址 `Prefs.remote()`（复用老 `remote_url` 键）。
+- 内外网切换后 cookie 因 origin 变化而失效，靠原生 token（`Prefs.authToken`）在每个新 origin 预种 cookie，免重新登录。
+
+设置页（长按桌面图标「服务器设置」/ 错误页按钮 / 遥控设置键）可维护：内网地址（多行）、外网地址、家里 WiFi 名单、网络模式。清空内网地址保存 = 恢复出厂默认（`Config.DEFAULT_LOCAL_URLS`）。
+
+## 默认值与行为开关（Config.kt）
+
+**改出厂默认值 / 行为开关只需要动 `app/src/main/java/com/sunhuip/ha3dapp/Config.kt` 并重出包**；
+用户在应用内设置页保存的地址、WiFi 名单、网络模式等存 SharedPreferences（`Prefs.kt`），优先级更高，不需要改代码。
 
 | 常量 | 说明 |
 |---|---|
-| `OFFICIAL_LOCAL_URL` | 内网正式地址 |
-| `TEST_LOCAL_URL_A` / `TEST_LOCAL_URL_B` | 两个内网测试地址 |
-| `LOCAL_URL` | 出厂默认入口，指向 `OFFICIAL_LOCAL_URL` |
-| `PRESETS` | 设置页下拉预设，带「正式 / 测试 / 调试」标签 |
-| `KEEP_SCREEN_ON` / `SHOW_STATUS_BAR` | 屏幕常亮 / 状态栏模式 |
-| `RECHECK_DEBOUNCE_MS` | 错误页态下网络恢复自动重试的防抖毫秒 |
+| `OFFICIAL_LOCAL_URL` | 出厂默认内网地址（仅首次安装、从没设置过时用） |
+| `DEFAULT_LOCAL_URLS` | 出厂默认内网地址列表（用户设置页保存后以设置页为准） |
+| `NETWORK_MODE_AUTO` / `HOME` / `AWAY` | 网络模式：自动读 WiFi / 强制在家 / 强制外出 |
+| `PROBE_TIMEOUT_MS` | 后续候选地址的可达性探测超时 |
+| `KEEP_SCREEN_ON` / `SHOW_STATUS_BAR` | 屏幕常亮 / 状态栏模式的默认值 |
+| `RECHECK_DEBOUNCE_MS` | 网络变化 / 错误页态重试的防抖毫秒 |
+| `REUSE_WEBVIEW` | WebView 进程内单例（推荐 true，返回/设置页往返不重载） |
+| `RELEASE_WEBVIEW_ON_PRESSURE` | 内存极紧时是否放掉 WebView（展示设备建议 false） |
+| `OFFLINE_FALLBACK` | 主框架加载失败时回退离线副本 |
 
-> 主框架加载失败的处理写在 `MainActivity.onMainFrameFailed()`：直接显示错误页，不回退外网。
-> 老版本存过的 `remote_url` 键已不再读取，留着不影响运行。
+**改行为逻辑去哪个文件**（2026-11-19 起不再是单文件工程）：
+
+| 要改什么 | 文件 |
+|---|---|
+| 在家/外出判定、SSID 读取、地址可达性探测 | `NetEnv.kt` |
+| 地址解析与级联探测、WiFi 切换重载、扫码授权请求、离线回退、错误页 | `Shell.kt` |
+| 内网地址列表 / 外网地址 / WiFi 名单 / 网络模式 / token 的持久化 | `Prefs.kt` |
+| 设置页 UI（含扫码授权入口、当前连接显示） | `SettingsActivity.kt` |
+| 离线缓存落盘与命中 | `WebCache.kt` |
+| TV 遥控焦点 | `web/src/engine/tvFocus.js`（home 项目） |
 
 ## 构建方式
 ### 本地 CLI 构建（已在本机装好，2026-11-14）
@@ -86,12 +113,13 @@ ha3d-app/
 └── app/
     ├── build.gradle.kts             # minSdk 26 / target 34 / AGP 8.5.2 / Kotlin 1.9.24
     └── src/main/
-        ├── AndroidManifest.xml      # INTERNET 权限、明文 HTTP 放行、singleTask、android:name=.App
+        ├── AndroidManifest.xml      # INTERNET/定位权限、明文 HTTP 放行、singleTask、android:name=.App
         ├── java/com/sunhuip/ha3dapp/
         │   ├── App.kt               # Application：初始化壳层 + 启动预取
-        │   ├── Config.kt            # ★ 入口与开关
-        │   ├── Prefs.kt             # 地址 + 缓存代（服务端版本号）持久化
-        │   ├── Shell.kt             # ★ WebView 单例 + client + 错误页/离线回退 + 运行诊断
+        │   ├── Config.kt            # ★ 默认值与开关
+        │   ├── NetEnv.kt            # ★ 在家/外出判定（SSID）+ 地址可达性探测
+        │   ├── Prefs.kt             # 地址列表 + token + 缓存代（服务端版本号）持久化
+        │   ├── Shell.kt             # ★ WebView 单例 + client + 环境切换/逐地址探测 + 错误页/离线回退 + 运行诊断
         │   ├── WebCache.kt          # ★ 离线缓存（按服务端版本分代 + 按版本化 URL 命中）
         │   ├── SettingsActivity.kt  # 应用内服务器设置页（含运行诊断 / 清缓存）
         │   └── MainActivity.kt      # 窗口装饰 + attach/detach（不销毁 WebView）
@@ -125,9 +153,10 @@ ha3d-app/
 | 依据 | 怎么用 |
 |---|---|
 | 服务端根 `package.json` 的 `version`（`GET /api/version`） | 决定缓存「代」：目录 `files/webcache/<version>/`，发版即换目录，旧代迁移后清理 |
-| URL 自带的版本（Vite 文件哈希 / 插件 `?v=<plugin.json version>` / 旧站 `?v=N`） | 决定单个文件是否命中：版本一变 URL 就变，天然不命中 |
+| URL 自带的版本（Vite 文件哈希 / `?v=<plugin.json/item.json/package.json version>` / 旧站 `?v=N`） | 决定单个文件是否命中：版本一变 URL 就变，天然不命中 |
 
-只缓存 js / css / woff2 和入口 HTML；GLB、`catalog.json`、插件模型不碰（文件名不带版本，改了看不出来），
+只缓存 js / css / woff2、**带 `?v=` 版本号的 GLB 模型**（2026-11-19 起纳入：插件/家具包/内置模型的 URL 都已版本化，
+断网也能加载出 3D 模型；每个模型几 MB，由换代清理兜底）和入口 HTML；不带版本的 GLB、`catalog.json` 不碰，
 那类文件仍交给 WebView 的 ETag 协商。填充不依赖预取——**任何成功加载过的 URL 都会落盘**。
 
 **断网兜底**：主框架加载失败时，用「上次成功的 HTML + 本地 js/css 副本」重建页面，顶部浮一条
@@ -151,6 +180,28 @@ App 内**宽屏时**网页会自动开启 TV 焦点模式（`web/src/engine/tvFo
 | HOME 键 | 系统默认，壳不拦截 |
 
 键盘长按的系统 repeat 会连续触发，页面侧寻焦是轻量查询、无需节流。网页侧的焦点导航与调试参数（`?tv=1&debug=1`）详见 `ha-3d-home` 的 README。
+
+## 登录（外网穿透时用）
+
+服务端可配置单账号登录（见 `ha-3d-home` README「登录与外网访问」）。启用后 App 打开会被重定向到登录页，**App 用账号密码登录**（遥控器/触摸都可用）。
+
+**扫码授权登录（2026-11-19 定稿授权语义）**：App 已登录 = 授权方。在**设置页**点「扫码授权登录其他设备」，扫另一台设备登录页展示的一次性二维码，App 用自己的原生 token 调 `/api/auth/qr-approve` 批准（不写 cookie、不改自身登录态），对方登录页轮询到 `approved` 后自动兑换 session 登录。跨网络（对方外网、本机内网，或反之）同样成立：**App 只从二维码里提取 code，不信任也不打开其中内嵌的地址**（那是待登录方的 origin，App 未必连得上）；授权请求打 App 自己已登录的服务地址（`currentBase` 的 origin），两端打到同一后端进程即可在服务端内存命中同一条 code。前提：两端连的是同一个后端进程（多实例内存不共享）。
+
+要点：
+
+- 入口在设置页（`SettingsActivity` 的「扫码授权登录其他设备」按钮）；未登录（无原生 token）时按钮拒绝并提示先登录。
+- 授权请求经 WebView `evaluateJavascript` 发出，手动带 `X-HA3D-Token`（`apiAuth.js` 的守卫跳过 `/api/auth/*`，不会自动注入）；结果经 `AppShell.scanAuthResult()` 回调原生 Toast。需要 `CAMERA` 权限（Manifest 已声明，扫码库内部申请运行时权限），`CaptureActivity` 覆写为竖屏。
+- QR 一次性码 60 秒有效、单次消费（状态机 pending → approved → consumed）。
+- cookie 是登录 session 的载体之一：`Shell.init()` 显式开 `CookieManager`，`setAcceptThirdPartyCookies` 放行穿透域名，`onPause` 时 `flush()` 落盘。
+
+**内外网切换免登录（原生 token）**：cookie 按 origin 隔离，单靠它换地址必丢登录态。App 另有一层——登录成功后服务端在响应体返回 `token`（账号密码登录由 `login.js` 调 `AppShell.saveToken()`），存进 `Prefs.authToken`（应用私有目录）。之后：
+
+- `loadConfigured()` 在每次 `loadUrl()` 前调 `seedAuthCookie()`，把原生 token 预置成目标 origin 的 `ha3d_session` cookie——首屏 document 导航带不了自定义 header，靠这颗 cookie 过服务端门禁；
+- 页面内 `/api/*` 请求由前端 `services/apiAuth.js` 注入 `X-HA3D-Token` 头（经 `AppShell.getToken()` 取），服务端 `guard()` 两种来源都认。
+
+因此**设置页切换内网/外网地址无需重新登录**，服务端 session 表是同一张。**session 服务端落盘（2026-11-19）**：`data/auth-sessions.json` 整表持久化、重启自动恢复，服务重启后 App 免重新登录（token 在原生层保留且服务端 session 不再丢失）；服务端删除该文件 = 强制全部设备重登。退出登录走 `AppShell.logout()` → `Shell.clearAuth()` 清原生 token 与各 origin cookie，服务端 logout 同步清 token 并落盘。
+
+其他要点：扫码授权请求必须由 WebView 发出（`Shell.processScanPayload()` 用 `evaluateJavascript` 完成，绝对地址指向 `currentBase` 的 origin）。
 
 ## 一键打包（Windows / mac 通用）
 
