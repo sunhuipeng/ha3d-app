@@ -422,8 +422,10 @@ object Shell {
             if (view == null) return
             injectSafeTop(view)
             if (Shell.offlineShown) injectOfflineBanner(view)
-            /* 页面加载完成后刷一次 HTML 副本（节流在 WebCache 里做），保证回退副本尽量新 */
-            WebCache.prefetchAsync(Shell.app)
+            /* 页面加载完成后刷一次 HTML 副本（节流在 WebCache 里按 origin 做），保证回退副本尽量新。
+               传 currentBase 而不是让 WebCache 猜：外网时当前服务是 jmglink，写死内网地址就永远
+               只会给内网建副本，外网离线回退必然失败。 */
+            WebCache.prefetchAsync(Shell.app, Shell.currentBase ?: url)
         }
 
         override fun shouldInterceptRequest(

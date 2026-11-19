@@ -73,8 +73,10 @@ object WebCache {
         Thread(r, "ha3d-webcache").apply { isDaemon = true }
     }
 
-    /** 预取节流（onPageFinished 会反复触发，别每次都抓一遍） */
+    /** 预取节流（onPageFinished 会反复触发，别每次都抓一遍）。
+     *  按 origin 记：切内网/外网时 originKey 变了要立刻给新服务器建副本，不能被旧站的 5 分钟挡掉。 */
     private var lastPrefetchAt = 0L
+    private var lastPrefetchKey = ""
     private const val PREFETCH_MIN_GAP_MS = 5 * 60 * 1000L
 
     /** 当前缓存代（服务端版本号）；Prefs 里有旧值就先用，冷启动零等待 */
@@ -194,8 +196,14 @@ object WebCache {
 
     /* ---------------- 抓取落盘 ---------------- */
 
-    /** 抓 url 写到 f；先写 .tmp 再改名，避免读到半截文件 */
-    private fun fetchToFile(url: String, f: File): Boolean {
+    /**
+     * 抓 url 写到 f；先写 .tmp 再改名，避免读到半截文件。
+     *
+     * @param withAuth 是否带原生 token。入口 HTML 必须带：服务端启用登录门禁后，
+     *   裸请求 /index.html 会被 302 到 /login.html，存下来的「离线副本」就变成登录页了。
+     * @param requireOk 是否把 302 后的最终 URL 当失败（登录页不能当页面副本存）。
+     */
+    private fun fetchToFile(url: String, f: File, withAuth: Boolean = false): Boolean {
         var conn: HttpURLConnection? = null
         try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -203,8 +211,11 @@ object WebCache {
                 readTimeout = 6000
                 instanceFollowRedirects = true
                 setRequestProperty("Accept-Encoding", "identity")   // 落盘存原文，别存 gzip 体
+                if (withAuth) Prefs.authToken(Shell.app)?.let { setRequestProperty("X-HA3D-Token", it) }
             }
             if (conn.responseCode != 200) return false
+            /* 被重定向到登录页 = 没拿到真正的页面副本，宁可不存（让诊断继续显示「无」） */
+            if (withAuth && conn.url?.path?.endsWith("/login.html") == true) return false
             f.parentFile?.mkdirs()
             val tmp = File(f.path + ".tmp")
             conn.inputStream.use { input -> FileOutputStream(tmp).use { input.copyTo(it) } }
@@ -228,27 +239,33 @@ object WebCache {
      * 版本变了就切到新代并删掉旧代目录 —— 发版后旧缓存整体作废，
      * 不会出现「新前端配旧 js」这种最难查的问题。
      *
-     * 调用时机：Application 启动 + 每次主框架加载成功（服务端可能热升级）。
+     * 调用时机：Application 启动 + 每次页面加载完成（服务端可能热升级）。
+     *
+     * @param base 当前实际连接的地址（Shell.currentBase）。**不能写死 Prefs.local()**：
+     *   外网时当前服务是 jmglink，而 Prefs.local() 是内网地址——外网不可达，
+     *   版本请求必然失败，缓存代就永远停在 boot（这是「缓存代 boot」的根因之一）。
      */
-    fun refreshVersionAsync(ctx: Context) {
-        val entry = try { Prefs.local(ctx) } catch (_: Throwable) { return }
-        val origin = originOf(entry) ?: return
-        io.execute {
-            try {
-                val url = URL("$origin/api/version")
-                val conn = (url.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 2000
-                    readTimeout = 3000
-                }
-                if (conn.responseCode != 200) { conn.disconnect(); return@execute }
-                val body = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                // 极简解析：只取 version 字段，不引 JSON 库
-                val v = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-                if (v.isNullOrBlank()) return@execute
-                onVersionSeen(ctx, v)
-            } catch (_: Throwable) { }
-        }
+    fun refreshVersionAsync(ctx: Context, base: String? = null) {
+        val origin = originOf(base ?: try { Prefs.local(ctx) } catch (_: Throwable) { return }) ?: return
+        io.execute { checkVersion(ctx, origin) }
+    }
+
+    /** 在 io 线程核对版本：HTTP 请求 + 换代都在同一条线程，避免与落盘抢目录 */
+    private fun checkVersion(ctx: Context, origin: String) {
+        try {
+            val url = URL("$origin/api/version")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 2000
+                readTimeout = 3000
+            }
+            if (conn.responseCode != 200) { conn.disconnect(); return }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            // 极简解析：只取 version 字段，不引 JSON 库
+            val v = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+            if (v.isNullOrBlank()) return
+            onVersionSeen(ctx, v)
+        } catch (_: Throwable) { }
     }
 
     private fun onVersionSeen(ctx: Context, v: String) {
@@ -287,21 +304,30 @@ object WebCache {
     /* ---------------- 入口 HTML 副本（按服务器分开存） ---------------- */
 
     /**
-     * 启动预取当前入口的 HTML（节流）。
+     * 预取「当前实际连接的那台服务器」的入口 HTML（按 origin 独立节流）。
      * 只写盘，不参与命中优先路径 —— 正常加载永远走网络（保证改动即时生效），
      * 副本只在主框架加载失败时用来重建页面。
+     *
+     * @param base 当前 Shell.currentBase（在家=内网、外出=外网）。
+     *   **不能写死 Prefs.local()**：那只是内网地址，外网时给它建副本毫无意义，
+     *   外网 origin 就永远没有 HTML 副本 → 断网无法离线回退（「外网无副本」根因）。
      */
-    fun prefetchAsync(ctx: Context) {
-        val now = System.currentTimeMillis()
-        if (now - lastPrefetchAt < PREFETCH_MIN_GAP_MS) return
-        lastPrefetchAt = now
-        val url = try { Prefs.local(ctx) } catch (_: Throwable) { return }
-        if (!url.startsWith("http")) return
+    fun prefetchAsync(ctx: Context, base: String? = null) {
+        val url = try {
+            (base ?: Prefs.local(ctx)).takeIf { it.startsWith("http") } ?: return
+        } catch (_: Throwable) { return }
         val originKey = originKeyOf(url) ?: return
+
+        /* 版本核对不节流（每次页面加载完成都问一次，服务端实时读文件、开销极小）；
+           HTML 落盘才按 origin 节流：切服务器时 key 变了，立刻给新站建副本。 */
+        refreshVersionAsync(ctx, url)
+        val now = System.currentTimeMillis()
+        if (originKey == lastPrefetchKey && now - lastPrefetchAt < PREFETCH_MIN_GAP_MS) return
+        lastPrefetchAt = now
+        lastPrefetchKey = originKey
         io.execute {
-            try { fetchToFile(url, htmlFile(ctx, originKey)) } catch (_: Throwable) { }
+            try { fetchToFile(url, htmlFile(ctx, originKey), withAuth = true) } catch (_: Throwable) { }
         }
-        refreshVersionAsync(ctx)
     }
 
     /** base 这台服务器有没有可用的 HTML 副本（跨服务器一律不认，见文件头第 2 条） */
@@ -366,6 +392,7 @@ object WebCache {
     fun clear(ctx: Context) {
         try { root(ctx).listFiles()?.forEach { it.deleteRecursively() } } catch (_: Throwable) { }
         lastPrefetchAt = 0L
+        lastPrefetchKey = ""
         Log.i(TAG, "cache cleared")
     }
 }

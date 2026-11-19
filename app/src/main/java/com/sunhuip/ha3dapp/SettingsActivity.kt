@@ -71,12 +71,16 @@ class SettingsActivity : Activity() {
         spLocal = Spinner(this)
         fun refreshLocalSpinner() {
             val items = etLocal.text.toString().lines().map { it.trim() }.filter { it.isNotEmpty() }
+            /* setAdapter 会把 Spinner 选中项重置为第 0 项，所以必须在换 adapter **之前**记住选择：
+             * 首次进入读 Prefs 里上次保存的地址；之后编辑地址列表时保留用户当前选中项
+             * （该项被删掉则回落第一个）。之前在 setAdapter 之后读 selectedItem，
+             * 拿到的永远是第 0 项、Prefs 分支形同虚设 —— 下次进来下拉总是第一个地址。 */
+            val keep = if (spLocal.adapter == null) Prefs.localSelected(this@SettingsActivity)
+                       else spLocal.selectedItem as? String
             spLocal.adapter = android.widget.ArrayAdapter(
                 this, android.R.layout.simple_spinner_dropdown_item, items
             )
-            val cur = spLocal.selectedItem as? String
-                ?: Prefs.localSelected(this@SettingsActivity)
-            val idx = items.indexOf(cur)
+            val idx = if (keep != null) items.indexOf(keep) else -1
             spLocal.setSelection(if (idx >= 0) idx else 0)
         }
         etLocal.addTextChangedListener(object : android.text.TextWatcher {
