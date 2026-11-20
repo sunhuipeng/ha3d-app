@@ -216,8 +216,6 @@ class SettingsActivity : Activity() {
             setBackgroundColor(Color.rgb(255, 255, 255))
             addView(box)
         })
-
-        btnSave.setOnClickListener { save() }
     }
 
     /** 当前实际连接的地址（Shell 真实加载中的 URL；null = 错误页态/尚未连上） */

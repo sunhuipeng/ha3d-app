@@ -269,19 +269,21 @@ object WebCache {
     }
 
     private fun onVersionSeen(ctx: Context, v: String) {
-        val old = Prefs.appVersion(ctx)
+        /* Prefs 里没存过 = 首次安装还停在 boot 临时代；按 boot 处理才能把
+           刚抓到的新文件改名接过来（否则下面 cleanup 会把 boot 代整个删掉白下一轮） */
+        val old = Prefs.appVersion(ctx) ?: BOOT
         if (old == v) return
         Prefs.setAppVersion(ctx, v)
         version = v
         try {
             val base = root(ctx)
             val newDir = File(base, v)
-            val oldDir = old?.let { File(base, it) }
+            val oldDir = File(base, old)
             /* 第一次确定版本（之前是临时的 boot 代）时把内容直接接过来 ——
                那批文件本来就是刚从这个服务端抓的，改名比清空重下省一整轮加载。
                真发版时旧目录里是旧文件：Vite 产物名带哈希，URL 变了自然不命中，
                所以迁移过去也不会出现「新前端配旧 js」。 */
-            if (oldDir != null && oldDir.isDirectory && !newDir.exists()) {
+            if (oldDir.isDirectory && !newDir.exists()) {
                 if (!oldDir.renameTo(newDir)) Log.w(TAG, "rename ${oldDir.name} -> $v failed")
             }
             /* 其余更早的代直接清掉，控制体积 */
@@ -362,14 +364,6 @@ object WebCache {
         } catch (_: Throwable) {
             false
         }
-    }
-
-    /** 全部缓存占用。注意目录是三层：webcache/<版本>/<origin>/文件 ——
-     *  之前用两层 sumOf 把 origin 目录当成了文件（length=0），诊断页永远显示 0.0 MB。 */
-    fun sizeBytes(ctx: Context): Long = try {
-        root(ctx).walkTopDown().filter { it.isFile }.sumOf { it.length() }
-    } catch (_: Throwable) {
-        0L
     }
 
     /**

@@ -271,10 +271,12 @@ object Shell {
     /**
      * 加载当前环境对应的入口地址。与当前一致时不重载（避免打断正在看的页面）；
      * force = true 时（点「重试」）无条件重载。连不上不探测，直接走离线副本/错误页。
+     * 注意：**不在这里清 offlineShown** —— 离线副本显示中进设置页再返回 / 网络事件
+     * 都会走本方法，顶部清掉会让 scheduleRecheck 永远提前 return，网络恢复就不再
+     * 自动重载了。离开离线态的唯一时机是真正发起导航（navigateTo）。
      */
     fun loadConfigured(force: Boolean = false) {
         recheckPending = false
-        offlineShown = false
         lastInHome = NetEnv.inHome(app)   // 更新环境基线，作为下次 WiFi 切换的对比依据
         val target = resolveTarget()
         ensure()   // 保证 navigateTo 里 web 非空
@@ -295,9 +297,11 @@ object Shell {
     /**
      * 真正发起一次导航：预置登录 cookie + loadUrl，并同步 currentBase。
      * 所有地址切换（首屏、WiFi 切换、网络恢复）都走这里，保证 cookie 按新 origin 重种。
+     * 离开离线副本态的唯一时机也在这里（见 loadConfigured 注释）。
      */
     private fun navigateTo(url: String) {
         currentBase = url
+        offlineShown = false
         /* 首屏 document 导航带不了 header，靠预置的 cookie 让服务端 guard 直接放行 */
         seedAuthCookie(url)
         web?.loadUrl(url)
@@ -312,8 +316,7 @@ object Shell {
             if (recheckPending) {
                 val t = currentBase
                 if (t != null && offlineShown) {
-                    offlineShown = false
-                    web?.loadUrl(t)          // 离线副本 → 网络恢复，重拉一次
+                    navigateTo(t)            // 离线副本 → 网络恢复，重拉一次（统一走 navigateTo）
                 } else {
                     loadConfigured(force = true)
                 }
@@ -632,16 +635,14 @@ object Shell {
             Shell.openSettings()   // 与遥控设置键同一路径（注意限定名，否则递归到自己）
         }
 
-        /** 设置页「扫码授权登录」流程：授权请求完成后由注入的 JS 回调，原生 Toast 提示结果 */
+        /** 设置页「扫码授权登录」流程：授权请求完成后由注入的 JS 回调，原生 Toast 提示结果。
+         *  ⚠ 必须切回主线程再 Toast：本方法跑在 WebView 的 JavaBridge 线程上（无 Looper），
+         *  直接 Toast.makeText 在新系统上会抛 RuntimeException。 */
         @JavascriptInterface
         fun scanAuthResult(msg: String) {
-            Toast.makeText(app, msg, if (msg.startsWith("已授权")) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
-        }
-
-        /** 登录页「扫码登录」按钮：打开摄像头扫一次性登录码（保留兼容，现入口在设置页） */
-        @JavascriptInterface
-        fun scanLogin() {
-            Shell.startScan()
+            main.post {
+                Toast.makeText(app, msg, if (msg.startsWith("已授权")) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+            }
         }
 
         /** 登录成功后由页面调用，把服务端返回的 token 存进原生层（跨地址复用） */
@@ -753,7 +754,4 @@ object Shell {
             appendLine("离线副本：${if (WebCache.hasHtml(app, base)) "有" else "无"}，资源 $n 个 / $size")
         }.trim()
     }
-
-    /** 供 MainActivity 判「是否已建好」 */
-    fun hasWeb(): Boolean = web != null
 }

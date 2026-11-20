@@ -16,12 +16,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.view.WindowManager
-import android.webkit.WebView
 import androidx.core.content.ContextCompat
 
 class MainActivity : Activity() {
-
-    private var web: WebView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,7 +27,7 @@ class MainActivity : Activity() {
             applyImmersive()
             applyKeepAwake()
 
-            web = Shell.attach(this)     // 复用进程内单例（含预热、诊断、缓存策略）
+            Shell.attach(this)           // 复用进程内单例（含预热、诊断、缓存策略）
             Shell.loadConfigured()       // 与当前入口一致时不会重载，避免打断正在看的页面
             ensureLocationPermission()   // 自动模式读 SSID 需要定位权限（用户选「自动为主+手动兜底」）
         } catch (t: Throwable) {
@@ -127,7 +124,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        val w = web
+        val w = Shell.web
         if (w != null && w.canGoBack()) w.goBack() else super.onBackPressed()
     }
 
@@ -141,7 +138,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        web?.onResume()
+        /* 读 Shell.web 而不是本地字段：onTrimMemory 主动 release 后本地引用会指向已销毁实例 */
+        Shell.web?.onResume()
         applyImmersive()
         applyKeepAwake()    // 设置页拨了常亮开关，回来立即生效（onRestart→onResume 必经）
     }
@@ -192,7 +190,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
-        web?.onPause()
+        Shell.web?.onPause()
         Shell.flushCookies()   // 落盘登录 cookie，重启后仍保持登录
         super.onPause()
     }

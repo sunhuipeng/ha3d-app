@@ -41,7 +41,8 @@ object NetEnv {
             .toSet()
         /* 读不到 SSID、或压根没配家里名单 → 无法比对 → 默认在家（用户 11-19 确认） */
         if (ssid == null || homeList.isEmpty()) return true
-        return homeList.any { it.equals(ssid, ignoreCase = false) }
+        /* 忽略大小写：名单是用户手输的，「Home」和手机上报的「home」应视为同一个 */
+        return homeList.any { it.equals(ssid, ignoreCase = true) }
     }
 
     /**

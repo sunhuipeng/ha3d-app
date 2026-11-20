@@ -75,9 +75,6 @@ object Prefs {
     fun localRaw(ctx: Context): String? =
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).getString(K_LOCAL, null)
 
-    /** 单地址写入（兼容旧调用点） */
-    fun set(ctx: Context, local: String) = setLocalList(ctx, listOf(local))
-
     fun setLocalList(ctx: Context, urls: List<String>) {
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
             .putString(K_LOCAL, urls.joinToString("\n") { it.trim() }.trim())
